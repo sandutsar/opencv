@@ -15,6 +15,7 @@ Implementation of Scale layer.
 #include "../op_halide.hpp"
 #include "../op_inf_engine.hpp"
 #include "../ie_ngraph.hpp"
+#include "../op_webnn.hpp"
 
 #include <opencv2/imgproc.hpp>
 #include <opencv2/dnn/shape_utils.hpp>
@@ -32,6 +33,10 @@ namespace dnn
 class ScaleLayerImpl CV_FINAL : public ScaleLayer
 {
 public:
+#ifdef HAVE_WEBNN
+    mutable int dims;
+    mutable int numChannels;
+#endif
     ScaleLayerImpl(const LayerParams& params)
     {
         setParamsFrom(params);
@@ -47,6 +52,15 @@ public:
                          std::vector<MatShape> &internals) const CV_OVERRIDE
     {
         outputs.assign(1, inputs[0]);
+#ifdef HAVE_WEBNN
+        dims = inputs[0].size();
+        numChannels = 1;
+        if (inputs.size() > 1)
+        {
+            for (const size_t& dim : inputs[1])
+                numChannels *= dim;
+        }
+#endif
         return true;
     }
 
@@ -64,11 +78,14 @@ public:
         {
             return backendId == DNN_BACKEND_OPENCV;
         }
+#ifdef HAVE_INF_ENGINE
+        if (backendId == DNN_BACKEND_INFERENCE_ENGINE_NGRAPH)
+            return axis > 0;
+#endif
         return backendId == DNN_BACKEND_OPENCV ||
                backendId == DNN_BACKEND_CUDA ||
                backendId == DNN_BACKEND_HALIDE ||
-               (backendId == DNN_BACKEND_INFERENCE_ENGINE_NN_BUILDER_2019 && axis == 1 && !blobs.empty()) ||
-               (backendId == DNN_BACKEND_INFERENCE_ENGINE_NGRAPH && axis > 0);
+               (backendId == DNN_BACKEND_WEBNN && axis >0);
     }
 
     template<typename T>
@@ -90,7 +107,7 @@ public:
         CV_TRACE_FUNCTION();
         CV_TRACE_ARG_VALUE(name, "name", name.c_str());
 
-        if (inputs_arr.depth() == CV_16S)
+        if (inputs_arr.depth() == CV_16F)
         {
             forward_fallback(inputs_arr, outputs_arr, internals_arr);
             return;
@@ -114,6 +131,16 @@ public:
         CV_Assert(numWeights != 0);
         if (hasWeights && hasBias)
             CV_CheckEQ(weights.total(), bias.total(), "Incompatible weights/bias blobs");
+
+        if (weights.total() == 1)
+        {
+            // The total() of bias should be same as weights.
+            if (hasBias)
+                inpBlob.convertTo(outBlob, CV_32F, weights.at<float>(0), bias.at<float>(0));
+            else
+                inpBlob.convertTo(outBlob, CV_32F, weights.at<float>(0));
+            return;
+        }
 
         int endAxis;
         for (endAxis = axis + 1; endAxis <= inpBlob.dims; ++endAxis)
@@ -299,81 +326,92 @@ public:
     }
 #endif  // HAVE_HALIDE
 
-#ifdef HAVE_DNN_IE_NN_BUILDER_2019
-    virtual Ptr<BackendNode> initInfEngine(const std::vector<Ptr<BackendWrapper> >&) CV_OVERRIDE
-    {
-        InferenceEngine::Builder::Layer l = InferenceEngine::Builder::ScaleShiftLayer(name);
-
-        CV_Assert(!blobs.empty());
-        const size_t numChannels = blobs[0].total();
-        if (hasWeights)
-        {
-            addConstantData("weights", wrapToInfEngineBlob(blobs[0], {numChannels}, InferenceEngine::Layout::C), l);
-        }
-        else
-        {
-            auto weights = InferenceEngine::make_shared_blob<float>({
-                               InferenceEngine::Precision::FP32, {(size_t)numChannels},
-                               InferenceEngine::Layout::C
-                           });
-            weights->allocate();
-            float* buf = weights->buffer().as<float*>();
-            std::fill(buf, buf + numChannels, 1);
-            addConstantData("weights", weights, l);
-        }
-        if (hasBias)
-            addConstantData("biases", wrapToInfEngineBlob(blobs.back(), {numChannels}, InferenceEngine::Layout::C), l);
-        return Ptr<BackendNode>(new InfEngineBackendNode(l));
-    }
-#endif  // HAVE_DNN_IE_NN_BUILDER_2019
-
 
 #ifdef HAVE_DNN_NGRAPH
     virtual Ptr<BackendNode> initNgraph(const std::vector<Ptr<BackendWrapper> >& inputs, const std::vector<Ptr<BackendNode> >& nodes) CV_OVERRIDE
     {
         auto ieInpNode0 = nodes[0].dynamicCast<InfEngineNgraphNode>()->node;
-        auto ieInpNode1 = nodes.size() > 1 ? nodes[1].dynamicCast<InfEngineNgraphNode>()->node : nullptr;
+        ov::Output<ov::Node> ieInpNode1;
+        if (nodes.size() > 1)
+            ieInpNode1 = nodes[1].dynamicCast<InfEngineNgraphNode>()->node;
 
         size_t numChannels = 1;
         if (blobs.empty())
-            for (const size_t& dim : ieInpNode1->get_shape())
+            for (const size_t& dim : ieInpNode1.get_shape())
                 numChannels *= dim;
         else
             numChannels = blobs[0].total();
 
-        std::vector<size_t> shape(ieInpNode0->get_shape().size(), 1);
+        std::vector<size_t> shape(ieInpNode0.get_shape().size(), 1);
         int cAxis = normalize_axis(axis, shape.size());
         shape[cAxis] = numChannels;
 
-        auto node = ieInpNode0;
+        std::shared_ptr<ov::Node> node;
         if (hasWeights)
         {
-            auto weight = blobs.empty() ? ieInpNode1 :
-                          std::make_shared<ngraph::op::Constant>(ngraph::element::f32, ngraph::Shape(shape), blobs[0].data);
-
-#if INF_ENGINE_VER_MAJOR_GT(INF_ENGINE_RELEASE_2021_2)
-            node = std::make_shared<ngraph::op::v1::Multiply>(node, weight, ngraph::op::AutoBroadcastType::NUMPY);
-#else
-            node = std::make_shared<ngraph::op::v0::Multiply>(node, weight, ngraph::op::AutoBroadcastType::NUMPY);
-#endif
+            ov::Output<ov::Node> weight = blobs.empty() ? ieInpNode1 :
+                          std::make_shared<ov::op::v0::Constant>(ov::element::f32, ov::Shape(shape), blobs[0].data);
+            node = std::make_shared<ov::op::v1::Multiply>(ieInpNode0, weight, ov::op::AutoBroadcastType::NUMPY);
         }
         if (hasBias || !hasWeights)
         {
-            std::shared_ptr<ngraph::Node> bias;
+            ov::Output<ov::Node> bias;
             if (hasBias)
             {
                 bias = blobs.empty() ? ieInpNode1 :
-                       std::make_shared<ngraph::op::Constant>(ngraph::element::f32,
-                                                              ngraph::Shape(shape), blobs.back().data);
+                       std::make_shared<ov::op::v0::Constant>(ov::element::f32,
+                                                              ov::Shape(shape), blobs.back().data);
             }
             else
-                bias = std::make_shared<ngraph::op::Constant>(ngraph::element::f32,
-                                                              ngraph::Shape(shape), std::vector<float>(numChannels, 0).data());
-            node = std::make_shared<ngraph::op::v1::Add>(node, bias, ngraph::op::AutoBroadcastType::NUMPY);
+                bias = std::make_shared<ov::op::v0::Constant>(ov::element::f32,
+                                                              ov::Shape(shape), std::vector<float>(numChannels, 0).data());
+            node = std::make_shared<ov::op::v1::Add>(node, bias, ov::op::AutoBroadcastType::NUMPY);
         }
         return Ptr<BackendNode>(new InfEngineNgraphNode(node));
     }
 #endif  // HAVE_DNN_NGRAPH
+
+#ifdef HAVE_WEBNN
+    virtual Ptr<BackendNode> initWebnn(const std::vector<Ptr<BackendWrapper> >& inputs, const std::vector<Ptr<BackendNode> >& nodes) CV_OVERRIDE
+    {
+        Ptr<WebnnBackendNode> node = nodes[0].dynamicCast<WebnnBackendNode>();
+        auto& webnnInpOperand0 = node->operand;
+        auto& webnnGraphBuilder = node->net->builder;
+        auto webnnInpOperand1 = nodes.size() > 1 ? nodes[1].dynamicCast<WebnnBackendNode>()->operand : nullptr;
+        auto webnnInpOperand2 = nodes.size() > 2 ? nodes[1].dynamicCast<WebnnBackendNode>()->operand : nullptr;
+        std::vector<int32_t> shape(dims, 1);
+
+        size_t channels = 1;
+        if (blobs.empty())
+            channels = numChannels;
+        else
+            channels = blobs[0].total();
+
+        int cAxis = normalize_axis(axis, shape.size());
+        shape[cAxis] = channels;
+
+        ml::Operand operand = webnnInpOperand0;
+        if (hasWeights)
+        {
+            ml::Operand webnnWeights = blobs.empty() ? webnnInpOperand1 : webnn::BuildConstant(webnnGraphBuilder, webnn::getShape(blobs[0]), blobs[0].data, blobs[0].total()*blobs[0].elemSize(), ml::OperandType::Float32);
+            webnnWeights = webnnGraphBuilder.Reshape(webnnWeights, shape.data(), shape.size());
+            operand = webnnGraphBuilder.Mul(operand, webnnWeights);
+        }
+        if (hasBias)
+        {
+            ml::Operand webnnBias;
+            if(!hasWeights)
+                webnnBias = blobs.empty() ? webnnInpOperand1 : webnn::BuildConstant(webnnGraphBuilder, webnn::getShape(blobs.back()), blobs.back().data, blobs.back().total()*blobs.back().elemSize(), ml::OperandType::Float32);
+            else
+                webnnBias = blobs.empty() ? webnnInpOperand2 : webnn::BuildConstant(webnnGraphBuilder, webnn::getShape(blobs.back()), blobs.back().data, blobs.back().total()*blobs.back().elemSize(), ml::OperandType::Float32);
+            webnnBias = webnnGraphBuilder.Reshape(webnnBias, shape.data(), shape.size());
+            operand = webnnGraphBuilder.Add(operand, webnnBias);
+        }
+
+        return Ptr<BackendNode>(new WebnnBackendNode(operand));
+    }
+#endif
+
 
     void getScaleShift(Mat& scale, Mat& shift) const CV_OVERRIDE
     {

@@ -44,6 +44,8 @@
 
 #ifdef HAVE_JPEG
 
+#include <opencv2/core/utils/logger.hpp>
+
 #ifdef _MSC_VER
 //interaction between '_setjmp' and C++ object destruction is non-portable
 #pragma warning(disable: 4611)
@@ -258,9 +260,6 @@ bool  JpegDecoder::readHeader()
         }
     }
 
-    if( !result )
-        close();
-
     return result;
 }
 
@@ -410,7 +409,9 @@ bool  JpegDecoder::readData( Mat& img )
     {
         jpeg_decompress_struct* cinfo = &((JpegState*)m_state)->cinfo;
         JpegErrorMgr* jerr = &((JpegState*)m_state)->jerr;
+#ifndef JCS_EXTENSIONS
         JSAMPARRAY buffer = 0;
+#endif
 
         if( setjmp( jerr->setjmp_buffer ) == 0 )
         {
@@ -430,6 +431,18 @@ bool  JpegDecoder::readData( Mat& img )
             }
 #endif
 
+#ifdef JCS_EXTENSIONS
+            if( color )
+            {
+                cinfo->out_color_space = JCS_EXT_BGR;
+                cinfo->out_color_components = 3;
+            }
+            else
+            {
+                cinfo->out_color_space = JCS_GRAYSCALE;
+                cinfo->out_color_components = 1;
+            }
+#else
             if( color )
             {
                 if( cinfo->num_components != 4 )
@@ -456,6 +469,7 @@ bool  JpegDecoder::readData( Mat& img )
                     cinfo->out_color_components = 4;
                 }
             }
+#endif
 
             // Check for Exif marker APP1
             jpeg_saved_marker_ptr exif_marker = NULL;
@@ -482,12 +496,17 @@ bool  JpegDecoder::readData( Mat& img )
 
             jpeg_start_decompress( cinfo );
 
+#ifndef JCS_EXTENSIONS
             buffer = (*cinfo->mem->alloc_sarray)((j_common_ptr)cinfo,
                                               JPOOL_IMAGE, m_width*4, 1 );
+#endif
 
             uchar* data = img.ptr();
             for( ; m_height--; data += step )
             {
+#ifdef JCS_EXTENSIONS
+                jpeg_read_scanlines( cinfo, &data, 1 );
+#else
                 jpeg_read_scanlines( cinfo, buffer, 1 );
                 if( color )
                 {
@@ -503,6 +522,7 @@ bool  JpegDecoder::readData( Mat& img )
                     else
                         icvCvt_CMYK2Gray_8u_C4C1R( buffer[0], 0, data, 0, Size(m_width,1) );
                 }
+#endif
             }
 
             result = true;
@@ -510,7 +530,6 @@ bool  JpegDecoder::readData( Mat& img )
         }
     }
 
-    close();
     return result;
 }
 
@@ -595,16 +614,19 @@ bool JpegEncoder::write( const Mat& img, const std::vector<int>& params )
     int width = img.cols, height = img.rows;
 
     std::vector<uchar> out_buf(1 << 12);
+
+#ifndef JCS_EXTENSIONS
     AutoBuffer<uchar> _buffer;
     uchar* buffer;
+#endif
 
     struct jpeg_compress_struct cinfo;
     JpegErrorMgr jerr;
     JpegDestination dest;
 
-    jpeg_create_compress(&cinfo);
     cinfo.err = jpeg_std_error(&jerr.pub);
     jerr.pub.error_exit = error_exit;
+    jpeg_create_compress(&cinfo);
 
     if( !m_buf )
     {
@@ -631,8 +653,15 @@ bool JpegEncoder::write( const Mat& img, const std::vector<int>& params )
 
         int _channels = img.channels();
         int channels = _channels > 1 ? 3 : 1;
+
+#ifdef JCS_EXTENSIONS
+        cinfo.input_components = _channels;
+        cinfo.in_color_space = _channels == 3 ? JCS_EXT_BGR
+            : _channels == 4 ? JCS_EXT_BGRX : JCS_GRAYSCALE;
+#else
         cinfo.input_components = channels;
         cinfo.in_color_space = channels > 1 ? JCS_RGB : JCS_GRAYSCALE;
+#endif
 
         int quality = 95;
         int progressive = 0;
@@ -640,26 +669,27 @@ bool JpegEncoder::write( const Mat& img, const std::vector<int>& params )
         int rst_interval = 0;
         int luma_quality = -1;
         int chroma_quality = -1;
+        uint32_t sampling_factor = 0; // same as 0x221111
 
         for( size_t i = 0; i < params.size(); i += 2 )
         {
-            if( params[i] == CV_IMWRITE_JPEG_QUALITY )
+            if( params[i] == IMWRITE_JPEG_QUALITY )
             {
                 quality = params[i+1];
                 quality = MIN(MAX(quality, 0), 100);
             }
 
-            if( params[i] == CV_IMWRITE_JPEG_PROGRESSIVE )
+            if( params[i] == IMWRITE_JPEG_PROGRESSIVE )
             {
                 progressive = params[i+1];
             }
 
-            if( params[i] == CV_IMWRITE_JPEG_OPTIMIZE )
+            if( params[i] == IMWRITE_JPEG_OPTIMIZE )
             {
                 optimize = params[i+1];
             }
 
-            if( params[i] == CV_IMWRITE_JPEG_LUMA_QUALITY )
+            if( params[i] == IMWRITE_JPEG_LUMA_QUALITY )
             {
                 if (params[i+1] >= 0)
                 {
@@ -674,7 +704,7 @@ bool JpegEncoder::write( const Mat& img, const std::vector<int>& params )
                 }
             }
 
-            if( params[i] == CV_IMWRITE_JPEG_CHROMA_QUALITY )
+            if( params[i] == IMWRITE_JPEG_CHROMA_QUALITY )
             {
                 if (params[i+1] >= 0)
                 {
@@ -682,10 +712,31 @@ bool JpegEncoder::write( const Mat& img, const std::vector<int>& params )
                 }
             }
 
-            if( params[i] == CV_IMWRITE_JPEG_RST_INTERVAL )
+            if( params[i] == IMWRITE_JPEG_RST_INTERVAL )
             {
                 rst_interval = params[i+1];
                 rst_interval = MIN(MAX(rst_interval, 0), 65535L);
+            }
+
+            if( params[i] == IMWRITE_JPEG_SAMPLING_FACTOR )
+            {
+                sampling_factor = static_cast<uint32_t>(params[i+1]);
+
+                switch ( sampling_factor )
+                {
+                    case IMWRITE_JPEG_SAMPLING_FACTOR_411:
+                    case IMWRITE_JPEG_SAMPLING_FACTOR_420:
+                    case IMWRITE_JPEG_SAMPLING_FACTOR_422:
+                    case IMWRITE_JPEG_SAMPLING_FACTOR_440:
+                    case IMWRITE_JPEG_SAMPLING_FACTOR_444:
+                    // OK.
+                    break;
+
+                    default:
+                    CV_LOG_WARNING(NULL, cv::format("Unknown value for IMWRITE_JPEG_SAMPLING_FACTOR: 0x%06x", sampling_factor ) );
+                    sampling_factor = 0;
+                    break;
+                }
             }
         }
 
@@ -698,6 +749,14 @@ bool JpegEncoder::write( const Mat& img, const std::vector<int>& params )
             jpeg_simple_progression( &cinfo );
         if( optimize )
             cinfo.optimize_coding = TRUE;
+
+        if( (channels > 1) && ( sampling_factor != 0 ) )
+        {
+            cinfo.comp_info[0].v_samp_factor = (sampling_factor >> 16 ) & 0xF;
+            cinfo.comp_info[0].h_samp_factor = (sampling_factor >> 20 ) & 0xF;
+            cinfo.comp_info[1].v_samp_factor = 1;
+            cinfo.comp_info[1].h_samp_factor = 1;
+        }
 
 #if JPEG_LIB_VERSION >= 70
         if (luma_quality >= 0 && chroma_quality >= 0)
@@ -718,14 +777,17 @@ bool JpegEncoder::write( const Mat& img, const std::vector<int>& params )
 
         jpeg_start_compress( &cinfo, TRUE );
 
+#ifndef JCS_EXTENSIONS
         if( channels > 1 )
             _buffer.allocate(width*channels);
         buffer = _buffer.data();
+#endif
 
         for( int y = 0; y < height; y++ )
         {
             uchar *data = img.data + img.step*y, *ptr = data;
 
+#ifndef JCS_EXTENSIONS
             if( _channels == 3 )
             {
                 icvCvt_BGR2RGB_8u_C3R( data, 0, buffer, 0, Size(width,1) );
@@ -736,6 +798,7 @@ bool JpegEncoder::write( const Mat& img, const std::vector<int>& params )
                 icvCvt_BGRA2BGR_8u_C4C3R( data, 0, buffer, 0, Size(width,1), 2 );
                 ptr = buffer;
             }
+#endif
 
             jpeg_write_scanlines( &cinfo, &ptr, 1 );
         }

@@ -1,10 +1,12 @@
 Color conversions {#imgproc_color_conversions}
 =================
+
 See cv::cvtColor and cv::ColorConversionCodes
+
 @todo document other conversion modes
 
 @anchor color_convert_rgb_gray
-RGB \f$\leftrightarrow\f$ GRAY
+RGB \emoji arrow_right GRAY
 ------------------------------
 Transformations within RGB space like adding/removing the alpha channel, reversing the channel
 order, conversion to/from 16-bit RGB color (R5:G6:B5 or R5:G5:B5), as well as conversion
@@ -20,7 +22,7 @@ More advanced channel reordering can also be done with cv::mixChannels.
 @see cv::COLOR_BGR2GRAY, cv::COLOR_RGB2GRAY, cv::COLOR_GRAY2BGR, cv::COLOR_GRAY2RGB
 
 @anchor color_convert_rgb_xyz
-RGB \f$\leftrightarrow\f$ CIE XYZ.Rec 709 with D65 white point
+RGB \emoji arrow_right CIE XYZ.Rec 709 with D65 white point
 --------------------------------------------------------------
 \f[\begin{bmatrix} X  \\ Y  \\ Z
   \end{bmatrix} \leftarrow \begin{bmatrix} 0.412453 & 0.357580 & 0.180423 \\ 0.212671 & 0.715160 & 0.072169 \\ 0.019334 & 0.119193 & 0.950227
@@ -35,7 +37,7 @@ RGB \f$\leftrightarrow\f$ CIE XYZ.Rec 709 with D65 white point
 @see cv::COLOR_BGR2XYZ, cv::COLOR_RGB2XYZ, cv::COLOR_XYZ2BGR, cv::COLOR_XYZ2RGB
 
 @anchor color_convert_rgb_ycrcb
-RGB \f$\leftrightarrow\f$ YCrCb JPEG (or YCC)
+RGB \emoji arrow_right YCrCb JPEG (or YCC)
 ---------------------------------------------
 \f[Y  \leftarrow 0.299  \cdot R + 0.587  \cdot G + 0.114  \cdot B\f]
 \f[Cr  \leftarrow (R-Y)  \cdot 0.713 + delta\f]
@@ -49,7 +51,7 @@ Y, Cr, and Cb cover the whole value range.
 @see cv::COLOR_BGR2YCrCb, cv::COLOR_RGB2YCrCb, cv::COLOR_YCrCb2BGR, cv::COLOR_YCrCb2RGB
 
 @anchor color_convert_rgb_hsv
-RGB \f$\leftrightarrow\f$ HSV
+RGB \emoji arrow_right HSV
 -----------------------------
 In case of 8-bit and 16-bit images, R, G, and B are converted to the floating-point format and
 scaled to fit the 0 to 1 range.
@@ -71,7 +73,7 @@ The values are then converted to the destination data type:
 @see cv::COLOR_BGR2HSV, cv::COLOR_RGB2HSV, cv::COLOR_HSV2BGR, cv::COLOR_HSV2RGB
 
 @anchor color_convert_rgb_hls
-RGB \f$\leftrightarrow\f$ HLS
+RGB \emoji arrow_right HLS
 -----------------------------
 In case of 8-bit and 16-bit images, R, G, and B are converted to the floating-point format and
 scaled to fit the 0 to 1 range.
@@ -96,7 +98,7 @@ The values are then converted to the destination data type:
 @see cv::COLOR_BGR2HLS, cv::COLOR_RGB2HLS, cv::COLOR_HLS2BGR, cv::COLOR_HLS2RGB
 
 @anchor color_convert_rgb_lab
-RGB \f$\leftrightarrow\f$ CIE L\*a\*b\*
+RGB \emoji arrow_right CIE L\*a\*b\*
 ---------------------------------------
 In case of 8-bit and 16-bit images, R, G, and B are converted to the floating-point format and
 scaled to fit the 0 to 1 range.
@@ -121,7 +123,7 @@ are then converted to the destination data type:
 @see cv::COLOR_BGR2Lab, cv::COLOR_RGB2Lab, cv::COLOR_Lab2BGR, cv::COLOR_Lab2RGB
 
 @anchor color_convert_rgb_luv
-RGB \f$\leftrightarrow\f$ CIE L\*u\*v\*
+RGB \emoji arrow_right CIE L\*u\*v\*
 ---------------------------------------
 In case of 8-bit and 16-bit images, R, G, and B are converted to the floating-point format and
 scaled to fit 0 to 1 range.
@@ -148,19 +150,26 @@ sources on the web, primarily from the Charles Poynton site <http://www.poynton.
 @see cv::COLOR_BGR2Luv, cv::COLOR_RGB2Luv, cv::COLOR_Luv2BGR, cv::COLOR_Luv2RGB
 
 @anchor color_convert_bayer
-Bayer \f$\rightarrow\f$ RGB
+Bayer \emoji arrow_right RGB
 ---------------------------
 The Bayer pattern is widely used in CCD and CMOS cameras. It enables you to get color pictures
-from a single plane where R,G, and B pixels (sensors of a particular component) are interleaved
+from a single plane where R, G, and B pixels (sensors of a particular component) are interleaved
 as follows:
+
+![Bayer patterns (BGGR, GBRG, GRGB, RGGB)](pics/Bayer_patterns.png)
+
+The output RGB components of a pixel are interpolated from 1, 2, or 4 neighbors of the pixel
+having the same color.
+
+@note See the following for information about correspondences between OpenCV Bayer pattern naming and classical Bayer pattern naming.
 
 ![Bayer pattern](pics/bayer.png)
 
-The output RGB components of a pixel are interpolated from 1, 2, or 4 neighbors of the pixel
-having the same color. There are several modifications of the above pattern that can be achieved
+There are several modifications of the above pattern that can be achieved
 by shifting the pattern one pixel left and/or one pixel up. The two letters \f$C_1\f$ and \f$C_2\f$ in
 the conversion constants CV_Bayer \f$C_1 C_2\f$ 2BGR and CV_Bayer \f$C_1 C_2\f$ 2RGB indicate the
 particular pattern type. These are components from the second row, second and third columns,
 respectively. For example, the above pattern has a very popular "BG" type.
 
-@see cv::COLOR_BayerBG2BGR, cv::COLOR_BayerGB2BGR, cv::COLOR_BayerRG2BGR, cv::COLOR_BayerGR2BGR, cv::COLOR_BayerBG2RGB, cv::COLOR_BayerGB2RGB, cv::COLOR_BayerRG2RGB, cv::COLOR_BayerGR2RGB
+@see cv::COLOR_BayerRGGB2BGR, cv::COLOR_BayerGRBG2BGR, cv::COLOR_BayerBGGR2BGR, cv::COLOR_BayerGBRG2BGR, cv::COLOR_BayerRGGB2RGB, cv::COLOR_BayerGRBG2RGB, cv::COLOR_BayerBGGR2RGB, cv::COLOR_BayerGBRG2RGB
+cv::COLOR_BayerBG2BGR, cv::COLOR_BayerGB2BGR, cv::COLOR_BayerRG2BGR, cv::COLOR_BayerGR2BGR, cv::COLOR_BayerBG2RGB, cv::COLOR_BayerGB2RGB, cv::COLOR_BayerRG2RGB, cv::COLOR_BayerGR2RGB

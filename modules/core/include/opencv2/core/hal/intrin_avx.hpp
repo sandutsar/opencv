@@ -1390,11 +1390,21 @@ OPENCV_HAL_IMPL_AVX_CHECK_SHORT(v_int16x16)
 ////////// Other math /////////
 
 /** Some frequent operations **/
+#if CV_FMA3
 #define OPENCV_HAL_IMPL_AVX_MULADD(_Tpvec, suffix)                            \
     inline _Tpvec v_fma(const _Tpvec& a, const _Tpvec& b, const _Tpvec& c)    \
     { return _Tpvec(_mm256_fmadd_##suffix(a.val, b.val, c.val)); }            \
     inline _Tpvec v_muladd(const _Tpvec& a, const _Tpvec& b, const _Tpvec& c) \
-    { return _Tpvec(_mm256_fmadd_##suffix(a.val, b.val, c.val)); }            \
+    { return _Tpvec(_mm256_fmadd_##suffix(a.val, b.val, c.val)); }
+#else
+#define OPENCV_HAL_IMPL_AVX_MULADD(_Tpvec, suffix)                                    \
+    inline _Tpvec v_fma(const _Tpvec& a, const _Tpvec& b, const _Tpvec& c)            \
+    { return _Tpvec(_mm256_add_##suffix(_mm256_mul_##suffix(a.val, b.val), c.val)); } \
+    inline _Tpvec v_muladd(const _Tpvec& a, const _Tpvec& b, const _Tpvec& c)         \
+    { return _Tpvec(_mm256_add_##suffix(_mm256_mul_##suffix(a.val, b.val), c.val)); }
+#endif
+
+#define OPENCV_HAL_IMPL_AVX_MISC(_Tpvec, suffix)                              \
     inline _Tpvec v_sqrt(const _Tpvec& x)                                     \
     { return _Tpvec(_mm256_sqrt_##suffix(x.val)); }                           \
     inline _Tpvec v_sqr_magnitude(const _Tpvec& a, const _Tpvec& b)           \
@@ -1404,6 +1414,8 @@ OPENCV_HAL_IMPL_AVX_CHECK_SHORT(v_int16x16)
 
 OPENCV_HAL_IMPL_AVX_MULADD(v_float32x8, ps)
 OPENCV_HAL_IMPL_AVX_MULADD(v_float64x4, pd)
+OPENCV_HAL_IMPL_AVX_MISC(v_float32x8, ps)
+OPENCV_HAL_IMPL_AVX_MISC(v_float64x4, pd)
 
 inline v_int32x8 v_fma(const v_int32x8& a, const v_int32x8& b, const v_int32x8& c)
 {
@@ -3125,7 +3137,7 @@ OPENCV_HAL_IMPL_AVX_LOADSTORE_INTERLEAVE(v_float64x4, double, f64, v_uint64x4, u
 // FP16
 //
 
-inline v_float32x8 v256_load_expand(const float16_t* ptr)
+inline v_float32x8 v256_load_expand(const hfloat* ptr)
 {
 #if CV_FP16
     return v_float32x8(_mm256_cvtph_ps(_mm_loadu_si128((const __m128i*)ptr)));
@@ -3137,7 +3149,7 @@ inline v_float32x8 v256_load_expand(const float16_t* ptr)
 #endif
 }
 
-inline void v_pack_store(float16_t* ptr, const v_float32x8& a)
+inline void v_pack_store(hfloat* ptr, const v_float32x8& a)
 {
 #if CV_FP16
     __m128i ah = _mm256_cvtps_ph(a.val, 0);
@@ -3146,7 +3158,7 @@ inline void v_pack_store(float16_t* ptr, const v_float32x8& a)
     float CV_DECL_ALIGNED(32) buf[8];
     v_store_aligned(buf, a);
     for (int i = 0; i < 8; i++)
-        ptr[i] = float16_t(buf[i]);
+        ptr[i] = hfloat(buf[i]);
 #endif
 }
 

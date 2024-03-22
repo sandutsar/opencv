@@ -40,6 +40,9 @@
 //M*/
 
 #include "../precomp.hpp"
+
+#include <opencv2/core/utils/fp_control_utils.hpp>
+
 #include <limits>
 #include <set>
 #include <map>
@@ -81,7 +84,7 @@ enum TorchType
     TYPE_FLOAT  = CV_32F,
     TYPE_BYTE   = CV_8U,
     TYPE_CHAR   = CV_8S,
-    TYPE_SHORT  = CV_16S,
+    TYPE_SHORT  = CV_16F,
     TYPE_INT    = CV_32S,
     TYPE_LONG   = CV_32SC2
 };
@@ -106,6 +109,8 @@ static inline bool endsWith(const String &str, const char *substr)
 
 struct TorchImporter
 {
+    FPDenormalsIgnoreHintScope fp_denormals_ignore_scope;
+
     typedef std::map<String, std::pair<int, Mat> > TensorsMap;
     Net net;
 
@@ -271,7 +276,7 @@ struct TorchImporter
             THFile_readByteRaw(file, (uchar*)storageMat.data, size);
             break;
         case TYPE_SHORT:
-            storageMat.create(1, size, CV_16S);
+            storageMat.create(1, size, CV_16F);
             THFile_readShortRaw(file, (short*)storageMat.data, size);
             break;
         case TYPE_INT:
@@ -869,6 +874,9 @@ struct TorchImporter
             {
                 newModule->apiType = "Softmax";
                 layerParams.set("log_softmax", nnName == "LogSoftMax");
+                // set default axis to 1
+                if(!layerParams.has("axis"))
+                    layerParams.set("axis", 1);
                 curModule->modules.push_back(newModule);
             }
             else if (nnName == "SpatialCrossMapLRN")
@@ -949,7 +957,7 @@ struct TorchImporter
                 int size = scalarParams.get<int>("size");
 
                 int begins[] = {0, 0, size, size};
-                int ends[] = {-1, -1, -size - 1, -size - 1};
+                int ends[] = {INT_MAX, INT_MAX, -size, -size};
 
                 newModule->apiType = "Slice";
                 layerParams.set("begin", DictValue::arrayInt<int*>(&begins[0], 4));
